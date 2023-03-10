@@ -17,7 +17,13 @@ type RegisteredQueue = {
   worker: Worker
 }
 
-const registeredQueues: Record<string, RegisteredQueue> = {}
+// declare registeredQueues as a global variable
+declare global {
+  var __registeredQueues: Record<string, RegisteredQueue> | undefined;
+}
+
+const registeredQueues =
+  global.__registeredQueues || (global.__registeredQueues = {});
 
 /**
  *

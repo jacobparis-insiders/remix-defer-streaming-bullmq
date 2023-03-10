@@ -1,11 +1,12 @@
-import { PassThrough } from "stream";
-import type { EntryContext } from "@remix-run/node";
-import { Response } from "@remix-run/node";
-import { RemixServer } from "@remix-run/react";
-import isbot from "isbot";
-import { renderToPipeableStream } from "react-dom/server";
+import { PassThrough } from "stream"
+import type { EntryContext } from "@remix-run/node"
+import { Response } from "@remix-run/node"
+import { RemixServer } from "@remix-run/react"
+import isbot from "isbot"
+import { renderToPipeableStream } from "react-dom/server"
+import "./queue.server"
 
-const ABORT_DELAY = 5000;
+const ABORT_DELAY = 5000
 
 export default function handleRequest(
   request: Request,
@@ -25,7 +26,7 @@ export default function handleRequest(
         responseStatusCode,
         responseHeaders,
         remixContext
-      );
+      )
 }
 
 function handleBotRequest(
@@ -43,31 +44,31 @@ function handleBotRequest(
       />,
       {
         onAllReady() {
-          const body = new PassThrough();
+          const body = new PassThrough()
 
-          responseHeaders.set("Content-Type", "text/html");
+          responseHeaders.set("Content-Type", "text/html")
 
           resolve(
             new Response(body, {
               headers: responseHeaders,
               status: responseStatusCode,
             })
-          );
+          )
 
-          pipe(body);
+          pipe(body)
         },
         onShellError(error: unknown) {
-          reject(error);
+          reject(error)
         },
         onError(error: unknown) {
-          console.error(error);
-          responseStatusCode = 500;
+          console.error(error)
+          responseStatusCode = 500
         },
       }
-    );
+    )
 
-    setTimeout(abort, ABORT_DELAY);
-  });
+    setTimeout(abort, ABORT_DELAY)
+  })
 }
 
 function handleBrowserRequest(
@@ -85,29 +86,29 @@ function handleBrowserRequest(
       />,
       {
         onShellReady() {
-          const body = new PassThrough();
+          const body = new PassThrough()
 
-          responseHeaders.set("Content-Type", "text/html");
+          responseHeaders.set("Content-Type", "text/html")
 
           resolve(
             new Response(body, {
               headers: responseHeaders,
               status: responseStatusCode,
             })
-          );
+          )
 
-          pipe(body);
+          pipe(body)
         },
         onShellError(error: unknown) {
-          reject(error);
+          reject(error)
         },
         onError(error: unknown) {
-          console.error(error);
-          responseStatusCode = 500;
+          console.error(error)
+          responseStatusCode = 500
         },
       }
-    );
+    )
 
-    setTimeout(abort, ABORT_DELAY);
-  });
+    setTimeout(abort, ABORT_DELAY)
+  })
 }

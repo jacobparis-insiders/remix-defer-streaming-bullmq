@@ -1,140 +1,160 @@
-# Stream Progress Updates with Remix using Defer, Suspense, and Server Sent Events
+# Stream BullMQ Job Progress with Remix using Defer, Suspense, and Server Sent Events
 
-This is an example of how to use Remix's Defer feature in combination with an EventStream to stream progress updates to the client.
+This is an example of how to use Remix's Defer feature in combination with an EventStream to stream progress updates of a BullMQ job to the client.
 
-[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/jacobparis/remix-defer-streaming-progress)
+[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/jacobparis/remix-defer-streaming-progress-bullmq)
 
 https://user-images.githubusercontent.com/5633704/222973633-ce8ccde2-ae0f-4880-8039-d11edea67c09.mov
 
+Check out this guide for a [simpler example of defer and event streams without bull-mq](https://www.jacobparis.com/guides/remix-defer-streaming-progress)
 
-We have a form on the homepage that dispatches a long-running process to create a new JSON file. This will take about a minute to complete and will constantly update itself with its progress, from `{ progress: 0 }` to `{ progress: 100 }`.
+## Server files
 
-When it's complete, with a progress of 100, the JSON file will contain a new property `img` that points to a URL.
+In `entry.server.tsx`, you must import `queue.server` to start the queue
 
+```ts
+import "./queue.server"
+```
 
-In a more practical scenario, you could use this to track the progress of rendering an image or video. Maybe you're generating a gif from code, or using an AI model to generate an image.
+The `queue.server.ts` file provides a `registerQueue` function that will be used in your worker files to create their queues.
 
-There are two separate ideas here, working together to achieve the optimal UX.
+## Worker files
 
-## What is Defer
+In `workers/processItem.server.ts`, you can see how to create a queue and process jobs.
 
-Defer is a feature of Remix that allows you to return an unresolved Promise from a loader. The page will server-side render without waiting for the promise to resolve, and then when it finally does, the client will re-render with the new data.
+This example function increments a counter from 0 to 100 and updates the job's progress every 500ms.
 
-This is especially useful for data-heavy pages, such as dashboards with many async datapoints. We don't want to wait for all of that data to load before we can show the user the page, so we can use Defer to show the page immediately, and then load the data in the background.
+```ts
+import { registerQueue } from "~/queue.server"
+import type { Job } from "bullmq"
 
-## How do we use defer?
+export const processItemQueue = registerQueue(
+  "PROCESS_ITEM",
+  async function (job: Job) {
+    const fakeProgressTimer = new Promise<void>((resolve) => {
+      let progress = 0
+      const interval = setInterval(async () => {
+        progress = Math.min(Math.ceil(progress + 1 + 5 * Math.random()), 100)
 
-When the user navigates to `items/$hash`, (we redirect them there automatically upon dispatching the long-running process), we have a loader that continuously watches the `$hash.json` file to check its progress. The loader defers a promise that will resolve only when the json's progress has hit 100.
+        await job.updateProgress(progress)
+
+        if (progress === 100) {
+          clearInterval(interval)
+          resolve()
+        }
+      }, 500)
+    })
+
+    await fakeProgressTimer
+
+    return {
+      img: "https://placekitten.com/200/200",
+    }
+  }
+)
+```
+
+## Running a job
+
+In `app/routes/index.tsx`, you can see how to start a job
+
+We're using a random hash as the job name and id, then redirecting to a dynamic route with the same id
+
+```ts
+import { processItemQueue } from "~/workers/processItem.server"
+
+export async function action() {
+  const hash = crypto.randomUUID()
+
+  void processItemQueue.add(hash, null, {
+    // specify the job id to avoid duplicated jobs
+    jobId: hash,
+  })
+
+  return redirect("/items/" + hash)
+}
+```
+
+## Loading the job data
+
+In `app/routes/items.$hash.tsx`, you can see how to access the job data.
+
+Since we are deferring the job, the page will load normally at first, and then when the job completes the page will update with the job data.
 
 ```ts
 export async function loader({ params }: LoaderArgs) {
-  if (!params.hash) return redirect("/")
-  const pathname = path.join("public", "items", `${params.hash}.json`)
+  const hash = params.hash
+  if (!hash) {
+    return redirect("/")
+  }
 
-  const file = fs.readFileSync(pathname)
-  if (!file) return redirect("/")
-
-  const item = JSON.parse(file.toString())
-  if (!item) return redirect("/")
-
-  if (item.progress === 100) {
-    return defer({
-      promise: item,
-    })
+  const job = await processItemQueue.getJob(hash)
+  if (!job) {
+    return redirect("/")
   }
 
   return defer({
-    promise: new Promise((resolve) => {
-      const interval = setInterval(() => {
-        const file = fs.readFileSync(pathname)
-        if (!file) return
-
-        const item = JSON.parse(file.toString())
-        if (!item) return
-
-        if (item.progress === 100) {
-          clearInterval(interval)
-          resolve(item)
-        }
-
-        return
-      })
-    }),
+    job: job.waitUntilFinished(processItemQueue.events, 30 * 1000),
   })
 }
 ```
 
-From a user's point of view, the page will load normally, but the browser's native loading spinner will continue for a minute until the promise resolves and the image appears on-screen.
+## Checking the job status
 
-This is good because it doesn't block the user from doing anything else on the page while they wait, and we could have some placeholder text that says something like "Rendering your image..." to let them know what's going on, but we can improve the UX by showing them exactly how far along the process is.
-
-## Event Streams and Server Sent Events
-
-When people talk about streaming, they're often talking about streaming video or audio. But we can also stream data, and that's what we're doing here.
-
-Server Sent Events are a standard part of the web API, but most frameworks don't make it easy to use them.
-
-No matter what technology you're using, server sent events work by having an endpoint that does not immediately close its connection, and which sends a content type of `text/event-stream`.
-
-In Remix, we can use a resource route to make this endpoint, and our loader will return a stream that constant checks our JSON file for its progress.
+In `app/routes/items.$hash.progress.tsx`, we create an event stream and stream the job's progress
 
 ```ts
+import { processItemQueue } from "~/workers/processItem.server"
+import { eventStream } from "remix-utils"
+
 export async function loader({ request, params }: LoaderArgs) {
-  const hash = params.hash
+  const hash = params.hash as string
+  if (!hash) {
+    return new Response("Not found", { status: 404 })
+  }
+
+  const job = await processItemQueue.getJob(hash)
+  if (!job) {
+    return new Response("Not found", { status: 404 })
+  }
 
   return eventStream(request.signal, function setup(send) {
-    const interval = setInterval(() => {
-      const file = fs.readFileSync(path.join("public", "items", `${hash}.json`))
-
-      if (file.toString()) {
-        const data = JSON.parse(file.toString())
-        const progress = data.progress
-        send({ event: "progress", data: String(progress) })
-
-        if (progress === 100) {
-          clearInterval(interval)
-        }
+    job.isCompleted().then((completed) => {
+      if (completed) {
+        send({ event: "progress", data: String(100) })
       }
-    }, 200)
+    })
 
-    return function clear(timer: number) {
-      clearInterval(interval)
-      clearInterval(timer)
+    processItemQueue.events.addListener("progress", onProgress)
+
+    function onProgress({
+      jobId,
+      data,
+    }: {
+      jobId: string
+      data: number | object
+    }) {
+      if (jobId !== hash) return
+
+      send({ event: "progress", data: String(data) })
+
+      if (data === 100) {
+        console.log("progress is 100, removing listener")
+        processItemQueue.events.removeListener("progress", onProgress)
+      }
+    }
+
+    return function clear() {
+      processItemQueue.events.removeListener("progress", onProgress)
     }
   })
 }
 ```
 
-On the client, while we're waiting for our deferred promise to resolve, we can consume that stream to know how far along our process is.
+In `app/routes/items.$hash.tsx`, we use the `useEventSource` hook to listen to the event stream and update the page with the progress
 
 ```ts
-const stream = useEventSource(`/items/${params.hash}/progress`, {
+const progress = useEventSource(`/items/${params.hash}/progress`, {
   event: "progress",
 })
-```
-
-## Putting them together
-
-We present deferred data by using React Suspense to conditionally show the content when it's ready. Suspense provides a fallback element to show when the data is not yet ready.
-
-Normally a loading spinner would go here, but we can use that to show our streamed progress instead.
-
-```tsx
-export default function Index() {
-  const data = useLoaderData()
-  const params = useParams()
-  const stream = useEventSource(`/items/${params.hash}/progress`, {
-    event: "progress",
-  })
-
-  return (
-    <div>
-      <Suspense fallback={<span> {stream}% </span>}>
-        <Await resolve={data.promise} errorElement={<p>Error loading img!</p>}>
-          {(promise) => <img alt="" src={promise.img} />}
-        </Await>
-      </Suspense>
-    </div>
-  )
-}
 ```

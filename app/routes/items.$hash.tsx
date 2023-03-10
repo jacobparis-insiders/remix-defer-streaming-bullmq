@@ -5,47 +5,28 @@ import path from "path"
 import fs from "fs"
 import { Suspense } from "react"
 import { useEventSource } from "remix-utils"
+import { processItemQueue } from "~/workers/processItem.server"
 
 export async function loader({ params }: LoaderArgs) {
-  if (!params.hash) return redirect("/")
-  const pathname = path.join("public", "items", `${params.hash}.json`)
+  const hash = params.hash
+  if (!hash) {
+    return redirect("/")
+  }
 
-  const file = fs.readFileSync(pathname)
-  if (!file) return redirect("/")
-
-  const item = JSON.parse(file.toString())
-  if (!item) return redirect("/")
-
-  if (item.progress === 100) {
-    return defer({
-      promise: item,
-    })
+  const job = await processItemQueue.getJob(hash)
+  if (!job) {
+    return redirect("/")
   }
 
   return defer({
-    promise: new Promise((resolve) => {
-      const interval = setInterval(() => {
-        const file = fs.readFileSync(pathname)
-        if (!file) return
-
-        const item = JSON.parse(file.toString())
-        if (!item) return
-
-        if (item.progress === 100) {
-          clearInterval(interval)
-          resolve(item)
-        }
-
-        return
-      }, 500)
-    }),
+    job: job.waitUntilFinished(processItemQueue.events, 30 * 1000),
   })
 }
 
 export default function Index() {
   const data = useLoaderData()
   const params = useParams()
-  const stream = useEventSource(`/items/${params.hash}/progress`, {
+  const progress = useEventSource(`/items/${params.hash}/progress`, {
     event: "progress",
   })
 
@@ -70,12 +51,9 @@ export default function Index() {
           overflow: "hidden",
         }}
       >
-        <Suspense fallback={<span> {stream}% </span>}>
-          <Await
-            resolve={data.promise}
-            errorElement={<p>Error loading img!</p>}
-          >
-            {(promise) => <img alt="" src={promise.img} />}
+        <Suspense fallback={<span> {progress}% </span>}>
+          <Await resolve={data.job} errorElement={<p>Error loading img!</p>}>
+            {(job) => <img alt="" src={job.img} />}
           </Await>
         </Suspense>
       </div>

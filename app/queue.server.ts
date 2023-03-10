@@ -17,7 +17,6 @@ type RegisteredQueue = {
   worker: Worker
 }
 
-// declare registeredQueues as a global variable
 declare global {
   var __registeredQueues: Record<string, RegisteredQueue> | undefined;
 }

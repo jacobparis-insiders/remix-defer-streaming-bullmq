@@ -3,7 +3,7 @@ import type { Job } from "bullmq"
 
 export const processItemQueue = registerQueue(
   "PROCESS_ITEM",
-  async function (job: Job) {
+  async function (job) {
     const fakeProgressTimer = new Promise<void>((resolve) => {
       let progress = 0
       const interval = setInterval(async () => {

@@ -3,7 +3,7 @@ import type { Processor } from "bullmq"
 import { QueueEvents } from "bullmq"
 import { Queue, Worker } from "bullmq"
 
-type AugmentedQueue = Queue & {
+type AugmentedQueue<T> = Queue<T> & {
   events: QueueEvents
 }
 
@@ -44,7 +44,7 @@ export function registerQueue<T>(name: string, processor: Processor<T>) {
     }
   }
 
-  const queue = registeredQueues[name].queue as AugmentedQueue
+  const queue = registeredQueues[name].queue as AugmentedQueue<T>
   queue.events = registeredQueues[name].queueEvents
 
   return queue

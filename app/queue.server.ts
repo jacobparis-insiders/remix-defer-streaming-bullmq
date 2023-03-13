@@ -29,11 +29,11 @@ const registeredQueues =
  * @param name Unique name of the queue
  * @param processor
  */
-export function registerQueue(name: string, processor: Processor) {
+export function registerQueue<T>(name: string, processor: Processor<T>) {
   if (!registeredQueues[name]) {
     const queue = new Queue(name, { connection })
     const queueEvents = new QueueEvents(name, { connection })
-    const worker = new Worker(name, processor, {
+    const worker = new Worker<T>(name, processor, {
       connection,
     })
 
